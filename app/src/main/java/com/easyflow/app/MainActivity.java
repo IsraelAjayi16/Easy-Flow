@@ -15,6 +15,7 @@ import androidx.media3.common.MediaItem;
 import androidx.media3.exoplayer.ExoPlayer;
 import androidx.media3.transformer.Composition;
 import androidx.media3.transformer.EditedMediaItem;
+import androidx.media3.transformer.EditedMediaItemSequence;
 import androidx.media3.transformer.ExportException;
 import androidx.media3.transformer.ExportResult;
 import androidx.media3.transformer.Transformer;
@@ -23,6 +24,8 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.util.ArrayList;
+import java.util.List;
 
 public class MainActivity extends Activity {
   private static final int PICK = 1;
@@ -32,6 +35,7 @@ public class MainActivity extends Activity {
   private Uri videoUri;
   private long startMs = 0;
   private long endMs = 0;
+  private final List<EditedMediaItem> clips = new ArrayList<>();
 
   @Override
   protected void onCreate(Bundle b) {
@@ -62,6 +66,16 @@ public class MainActivity extends Activity {
     status.setPadding(24, 16, 24, 16);
     root.addView(status, wrap());
 
+    LinearLayout row2 = new LinearLayout(this);
+    row2.setOrientation(LinearLayout.HORIZONTAL);
+    Button addClip = new Button(this);
+    addClip.setText("Add clip");
+    Button clear = new Button(this);
+    clear.setText("Clear all");
+    row2.addView(addClip, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+    row2.addView(clear, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+    root.addView(row2, wrap());
+
     Button export = new Button(this);
     export.setText("Export");
     root.addView(export, wrap());
@@ -88,7 +102,14 @@ public class MainActivity extends Activity {
       showTimes();
     });
 
-    export.setOnClickListener(v -> exportTrim());
+    addClip.setOnClickListener(v -> addCurrentClip());
+
+    clear.setOnClickListener(v -> {
+      clips.clear();
+      status.setText("Cleared. Clips in project: 0");
+    });
+
+    export.setOnClickListener(v -> exportProject());
   }
 
   private LinearLayout.LayoutParams wrap() {
@@ -98,7 +119,8 @@ public class MainActivity extends Activity {
   }
 
   private void showTimes() {
-    status.setText("Start: " + (startMs / 1000.0) + "s   End: " + (endMs / 1000.0) + "s");
+    status.setText("Start: " + (startMs / 1000.0) + "s   End: " + (endMs / 1000.0)
+        + "s   Clips in project: " + clips.size());
   }
 
   @Override
@@ -120,28 +142,39 @@ public class MainActivity extends Activity {
     player.play();
     startMs = 0;
     endMs = 0;
-    status.setText("Play the video, then tap Set start and Set end");
+    status.setText("Trim if you want, then tap Add clip. Clips in project: " + clips.size());
   }
 
-  private void exportTrim() {
-    if (videoUri == null || player == null) {
+  private void addCurrentClip() {
+    if (videoUri == null) {
       status.setText("Pick a video first");
       return;
     }
-    if (endMs <= startMs) {
-      status.setText("End must be after start. Tap Set start, then Set end.");
+    MediaItem.Builder mib = new MediaItem.Builder().setUri(videoUri);
+    boolean trimmed = endMs > startMs;
+    if (trimmed) {
+      mib.setClippingConfiguration(new MediaItem.ClippingConfiguration.Builder()
+          .setStartPositionMs(startMs)
+          .setEndPositionMs(endMs)
+          .build());
+    }
+    clips.add(new EditedMediaItem.Builder(mib.build()).build());
+    startMs = 0;
+    endMs = 0;
+    status.setText((trimmed ? "Trimmed clip" : "Full clip") + " added. Clips in project: "
+        + clips.size() + ". Pick the next video, or tap Export.");
+  }
+
+  private void exportProject() {
+    if (clips.isEmpty()) {
+      status.setText("No clips yet. Pick a video and tap Add clip.");
       return;
     }
-    status.setText("Exporting... please wait");
-    final File out = new File(getCacheDir(), "trim_" + System.currentTimeMillis() + ".mp4");
+    status.setText("Exporting " + clips.size() + " clip(s)... please wait");
+    final File out = new File(getCacheDir(), "project_" + System.currentTimeMillis() + ".mp4");
 
-    MediaItem item = new MediaItem.Builder()
-        .setUri(videoUri)
-        .setClippingConfiguration(new MediaItem.ClippingConfiguration.Builder()
-            .setStartPositionMs(startMs)
-            .setEndPositionMs(endMs)
-            .build())
-        .build();
+    Composition composition = new Composition.Builder(
+        new EditedMediaItemSequence(new ArrayList<>(clips))).build();
 
     Transformer transformer = new Transformer.Builder(this)
         .addListener(new Transformer.Listener() {
@@ -157,7 +190,7 @@ public class MainActivity extends Activity {
         })
         .build();
 
-    transformer.start(new EditedMediaItem.Builder(item).build(), out.getAbsolutePath());
+    transformer.start(composition, out.getAbsolutePath());
   }
 
   private void saveToGallery(File file) {
