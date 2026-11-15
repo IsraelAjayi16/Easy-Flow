@@ -4,6 +4,7 @@ import android.app.Activity;
 import android.content.ContentResolver;
 import android.content.ContentValues;
 import android.content.Intent;
+import android.media.MediaMetadataRetriever;
 import android.net.Uri;
 import android.os.Bundle;
 import android.provider.MediaStore;
@@ -49,7 +50,7 @@ public class MainActivity extends Activity {
   private Uri videoUri;
   private long startMs = 0;
   private long endMs = 0;
-  private final List<EditedMediaItem> clips = new ArrayList<>();
+  private final List<MediaItem> clips = new ArrayList<>();
 
   @Override
   protected void onCreate(Bundle b) {
@@ -177,7 +178,7 @@ public class MainActivity extends Activity {
           .setEndPositionMs(endMs)
           .build());
     }
-    clips.add(new EditedMediaItem.Builder(mib.build()).build());
+    clips.add(mib.build());
     startMs = 0;
     endMs = 0;
     status.setText((trimmed ? "Trimmed clip" : "Full clip") + " added. Clips in project: "
@@ -195,14 +196,18 @@ public class MainActivity extends Activity {
     status.setText("Exporting " + clips.size() + " clip(s) at " + label + "... please wait");
     final File out = new File(getCacheDir(), "project_" + System.currentTimeMillis() + ".mp4");
 
-    Composition.Builder cb = new Composition.Builder(
-        new EditedMediaItemSequence(new ArrayList<>(clips)));
-    if (height > 0) {
-      cb.setEffects(new Effects(
-          Collections.<AudioProcessor>emptyList(),
-          Collections.<Effect>singletonList(Presentation.createForHeight(height))));
+    List<EditedMediaItem> items = new ArrayList<>();
+    for (MediaItem m : clips) {
+      EditedMediaItem.Builder eb = new EditedMediaItem.Builder(m);
+      if (height > 0) {
+        eb.setEffects(new Effects(
+            Collections.<AudioProcessor>emptyList(),
+            Collections.<Effect>singletonList(Presentation.createForHeight(height))));
+      }
+      items.add(eb.build());
     }
-    Composition composition = cb.build();
+    Composition composition = new Composition.Builder(
+        new EditedMediaItemSequence(items)).build();
 
     Transformer transformer = new Transformer.Builder(this)
         .setEncoderFactory(new DefaultEncoderFactory.Builder(this)
@@ -211,7 +216,7 @@ public class MainActivity extends Activity {
         .addListener(new Transformer.Listener() {
           @Override
           public void onCompleted(Composition c, ExportResult result) {
-            saveToGallery(out);
+            saveToGallery(out, sizeOf(out));
           }
 
           @Override
@@ -222,6 +227,21 @@ public class MainActivity extends Activity {
         .build();
 
     transformer.start(composition, out.getAbsolutePath());
+  }
+
+  private String sizeOf(File f) {
+    try {
+      MediaMetadataRetriever r = new MediaMetadataRetriever();
+      r.setDataSource(f.getAbsolutePath());
+      String w = r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH);
+      String h = r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT);
+      String rot = r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION);
+      r.release();
+      if ("90".equals(rot) || "270".equals(rot)) return h + "x" + w;
+      return w + "x" + h;
+    } catch (Exception e) {
+      return "unknown size";
+    }
   }
 
   private String friendlyError(ExportException e, String label) {
@@ -236,7 +256,7 @@ public class MainActivity extends Activity {
     return "Export failed: " + e.getMessage() + "\n(" + code + ")";
   }
 
-  private void saveToGallery(File file) {
+  private void saveToGallery(File file, String size) {
     new Thread(() -> {
       try {
         ContentResolver cr = getContentResolver();
@@ -252,7 +272,7 @@ public class MainActivity extends Activity {
           while ((n = in.read(buf)) > 0) os.write(buf, 0, n);
         }
         file.delete();
-        runOnUiThread(() -> status.setText("Done! Saved to Movies/EasyFlow"));
+        runOnUiThread(() -> status.setText("Done! Saved to Movies/EasyFlow (" + size + ")"));
       } catch (Exception e) {
         runOnUiThread(() -> status.setText("Save failed: " + e.getMessage()));
       }
