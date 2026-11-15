@@ -8,14 +8,21 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.provider.MediaStore;
 import android.view.ViewGroup;
+import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.LinearLayout;
+import android.widget.Spinner;
 import android.widget.TextView;
+import androidx.media3.common.Effect;
 import androidx.media3.common.MediaItem;
+import androidx.media3.common.audio.AudioProcessor;
+import androidx.media3.effect.Presentation;
 import androidx.media3.exoplayer.ExoPlayer;
 import androidx.media3.transformer.Composition;
+import androidx.media3.transformer.DefaultEncoderFactory;
 import androidx.media3.transformer.EditedMediaItem;
 import androidx.media3.transformer.EditedMediaItemSequence;
+import androidx.media3.transformer.Effects;
 import androidx.media3.transformer.ExportException;
 import androidx.media3.transformer.ExportResult;
 import androidx.media3.transformer.Transformer;
@@ -25,13 +32,20 @@ import java.io.FileInputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 public class MainActivity extends Activity {
   private static final int PICK = 1;
+  private static final String[] QUALITY_LABELS = {
+      "Quality: Original size", "180p", "240p", "360p", "480p",
+      "720p (HD)", "1080p (Full HD)", "1440p (2K)", "2160p (4K)", "4320p (8K)"};
+  private static final int[] QUALITY_HEIGHTS = {0, 180, 240, 360, 480, 720, 1080, 1440, 2160, 4320};
+
   private ExoPlayer player;
   private PlayerView playerView;
   private TextView status;
+  private Spinner quality;
   private Uri videoUri;
   private long startMs = 0;
   private long endMs = 0;
@@ -75,6 +89,11 @@ public class MainActivity extends Activity {
     row2.addView(addClip, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
     row2.addView(clear, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
     root.addView(row2, wrap());
+
+    quality = new Spinner(this);
+    quality.setAdapter(new ArrayAdapter<>(this,
+        android.R.layout.simple_spinner_dropdown_item, QUALITY_LABELS));
+    root.addView(quality, wrap());
 
     Button export = new Button(this);
     export.setText("Export");
@@ -170,27 +189,51 @@ public class MainActivity extends Activity {
       status.setText("No clips yet. Pick a video and tap Add clip.");
       return;
     }
-    status.setText("Exporting " + clips.size() + " clip(s)... please wait");
+    final int pos = quality.getSelectedItemPosition();
+    final int height = QUALITY_HEIGHTS[pos];
+    final String label = QUALITY_LABELS[pos];
+    status.setText("Exporting " + clips.size() + " clip(s) at " + label + "... please wait");
     final File out = new File(getCacheDir(), "project_" + System.currentTimeMillis() + ".mp4");
 
-    Composition composition = new Composition.Builder(
-        new EditedMediaItemSequence(new ArrayList<>(clips))).build();
+    Composition.Builder cb = new Composition.Builder(
+        new EditedMediaItemSequence(new ArrayList<>(clips)));
+    if (height > 0) {
+      cb.setEffects(new Effects(
+          Collections.<AudioProcessor>emptyList(),
+          Collections.<Effect>singletonList(Presentation.createForHeight(height))));
+    }
+    Composition composition = cb.build();
 
     Transformer transformer = new Transformer.Builder(this)
+        .setEncoderFactory(new DefaultEncoderFactory.Builder(this)
+            .setEnableFallback(false)
+            .build())
         .addListener(new Transformer.Listener() {
           @Override
-          public void onCompleted(Composition composition, ExportResult result) {
+          public void onCompleted(Composition c, ExportResult result) {
             saveToGallery(out);
           }
 
           @Override
-          public void onError(Composition composition, ExportResult result, ExportException e) {
-            status.setText("Export failed: " + e.getMessage());
+          public void onError(Composition c, ExportResult result, ExportException e) {
+            status.setText(friendlyError(e, label));
           }
         })
         .build();
 
     transformer.start(composition, out.getAbsolutePath());
+  }
+
+  private String friendlyError(ExportException e, String label) {
+    String code = e.getErrorCodeName();
+    if (code.contains("ENCOD")) {
+      return "Your phone can't export at " + label
+          + " (the video encoder doesn't support it). Try a lower quality.\n(" + code + ")";
+    }
+    if (code.contains("DECOD")) {
+      return "Your phone can't read one of these videos (format not supported).\n(" + code + ")";
+    }
+    return "Export failed: " + e.getMessage() + "\n(" + code + ")";
   }
 
   private void saveToGallery(File file) {
@@ -227,4 +270,4 @@ public class MainActivity extends Activity {
     super.onDestroy();
     if (player != null) player.release();
   }
-}
+  }
