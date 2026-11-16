@@ -32,6 +32,8 @@ import androidx.media3.common.MediaItem;
 import androidx.media3.common.C;
 import androidx.media3.common.audio.SpeedProvider;
 import androidx.media3.common.audio.AudioProcessor;
+import androidx.media3.common.audio.ChannelMixingAudioProcessor;
+import androidx.media3.common.audio.ChannelMixingMatrix;
 import androidx.media3.common.audio.SonicAudioProcessor;
 import androidx.media3.effect.FrameDropEffect;
 import androidx.media3.effect.Presentation;
@@ -106,10 +108,12 @@ public class MainActivity extends Activity {
   static class Clip {
     final MediaItem item;
     final float speed;
+    final float volume;
 
-    Clip(MediaItem item, float speed) {
+    Clip(MediaItem item, float speed, float volume) {
       this.item = item;
       this.speed = speed;
+      this.volume = volume;
     }
   }
 
@@ -153,7 +157,9 @@ public class MainActivity extends Activity {
   private ExoPlayer player;
   private PlayerView playerView;
   private TextView status, limits;
-  private Spinner quality, fpsSpinner, bitrateSpinner, speedSpinner;
+    private static final String[] VOLUME_LABELS = {
+      "Muted", "25% vol", "50% vol", "100% vol", "150% vol", "200% vol", "250% vol", "300% vol", "350% vol", "400% vol"};
+  private static final float[] VOLUME_VALUES = {0f, 0.25f, 0.5f, 1f, 1.5f, 2f, 2.5f, 3f, 3.5f, 4f};
   private Uri videoUri;
   private long startMs = 0;
   private long endMs = 0;
@@ -247,7 +253,22 @@ public class MainActivity extends Activity {
     addClip.setText("Add clip");
     Button clear = new Button(this);
     clear.setText("Clear all");
-    row2.addView(speedSpinner, half());
+    volumeSpinner = makeSpinner(VOLUME_LABELS);
+    volumeSpinner.setSelection(3); // 100%
+    volumeSpinner.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener() {
+      @Override
+      public void onItemSelected(android.widget.AdapterView<?> parent, View view, int position, long id) {
+        if (player != null) player.setVolume(Math.min(1f, VOLUME_VALUES[position]));
+      }
+
+      @Override
+      public void onNothingSelected(android.widget.AdapterView<?> parent) {}
+    });
+    LinearLayout rowSV = new LinearLayout(this);
+    rowSV.setOrientation(LinearLayout.HORIZONTAL);
+    rowSV.addView(speedSpinner, half());
+    rowSV.addView(volumeSpinner, half());
+    root.addView(rowSV, wrap());
     row2.addView(addClip, half());
     row2.addView(clear, half());
     root.addView(row2, wrap());
