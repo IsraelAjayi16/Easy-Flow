@@ -560,7 +560,13 @@ public class MainActivity extends Activity {
         .setEncoderFactory(ef.build())
         .addListener(new Transformer.Listener() {
           @Override
-          public void onCompleted(Composition c, ExportResult result, ExportException e) {
+          public void onCompleted(Composition c, ExportResult result) {
+  exporting = false;
+  saveToGallery(out, sizeOf(out), describe(result));
+}
+
+@Override
+public void onError(Composition c, ExportResult result, ExportException e) {
             out.delete();
             String code = e.getErrorCodeName();
             boolean retryable = code.contains("FORMAT_UNSUPPORTED") || code.contains("INIT_FAILED");
