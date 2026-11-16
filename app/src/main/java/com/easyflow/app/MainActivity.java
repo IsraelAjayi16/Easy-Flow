@@ -711,7 +711,11 @@ public class MainActivity extends Activity {
     }
     int sp = speedSpinner.getSelectedItemPosition();
     int vp = volumeSpinner.getSelectedItemPosition();
-    clips.add(new Clip(mib.build(), SPEED_VALUES[sp], VOLUME_VALUES[vp]));
+        long dur = trimmed ? (endMs - startMs) : (player != null ? player.getDuration() : 0);
+    if (dur <= 0 || dur > 36000000L) dur = 3000;
+    clips.add(new Clip(mib.build(), SPEED_VALUES[sp], VOLUME_VALUES[vp], dur));
+    selectedClip = clips.size() - 1;
+    refreshTimeline();
     startMs = 0;
     endMs = 0;
     status.setText((trimmed ? "Trimmed clip" : "Full clip") + " added at "
