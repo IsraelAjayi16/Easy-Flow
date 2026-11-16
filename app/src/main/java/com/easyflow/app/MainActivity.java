@@ -10,6 +10,8 @@ import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.RectF;
 import android.graphics.Typeface;
+import android.media.MediaCodecInfo;
+import android.media.MediaCodecList;
 import android.media.MediaMetadataRetriever;
 import android.net.Uri;
 import android.os.Bundle;
@@ -114,12 +116,14 @@ public class MainActivity extends Activity {
   // ---------- State ----------
   private ExoPlayer player;
   private PlayerView playerView;
-  private TextView status;
+  private TextView status, limits;
   private Spinner quality, fpsSpinner, bitrateSpinner;
   private Uri videoUri;
   private long startMs = 0;
   private long endMs = 0;
   private final List<MediaItem> clips = new ArrayList<>();
+  private int maxBitrate = 0;
+  private String limitsText = "";
 
   private Transformer transformer;
   private File currentOut;
@@ -155,6 +159,8 @@ public class MainActivity extends Activity {
   @Override
   protected void onCreate(Bundle b) {
     super.onCreate(b);
+    readLimits();
+
     FrameLayout rootFrame = new FrameLayout(this);
 
     LinearLayout root = new LinearLayout(this);
@@ -204,6 +210,12 @@ public class MainActivity extends Activity {
     bitrateSpinner = makeSpinner(BITRATE_LABELS);
     root.addView(bitrateSpinner, wrap());
 
+    limits = new TextView(this);
+    limits.setText(limitsText);
+    limits.setTextSize(12);
+    limits.setPadding(24, 0, 24, 8);
+    root.addView(limits, wrap());
+
     Button export = new Button(this);
     export.setText("Export");
     root.addView(export, wrap());
@@ -241,6 +253,31 @@ public class MainActivity extends Activity {
     });
 
     export.setOnClickListener(v -> exportProject());
+  }
+
+  // ---------- Phone encoder limits ----------
+  private void readLimits() {
+    try {
+      MediaCodecList list = new MediaCodecList(MediaCodecList.REGULAR_CODECS);
+      for (MediaCodecInfo info : list.getCodecInfos()) {
+        if (!info.isEncoder()) continue;
+        String name = info.getName();
+        if (name.startsWith("OMX.google") || name.startsWith("c2.android")) continue;
+        for (String t : info.getSupportedTypes()) {
+          if (!t.equals("video/avc")) continue;
+          MediaCodecInfo.VideoCapabilities vc =
+              info.getCapabilitiesForType(t).getVideoCapabilities();
+          maxBitrate = vc.getBitrateRange().getUpper();
+          limitsText = "Phone encoder (H.264): up to "
+              + vc.getSupportedWidths().getUpper() + "x" + vc.getSupportedHeights().getUpper()
+              + ", max " + (maxBitrate / 1000000) + " Mbps";
+          return;
+        }
+      }
+      limitsText = "No hardware H.264 encoder found on this phone";
+    } catch (Exception e) {
+      limitsText = "Could not read the phone's encoder limits";
+    }
   }
 
   // ---------- UI helpers ----------
@@ -326,13 +363,14 @@ public class MainActivity extends Activity {
     overlay.setVisibility(View.VISIBLE);
   }
 
-  private void showOverlayDone(String size) {
+  private void showOverlayDone(String size, String actual) {
     exporting = false;
     overlayFinished = true;
     ring.setProgress(1f, true);
     ovTitle.setText("Done!");
     ovPercent.setText("100%");
-    ovDetail.setText("Saved to Movies/EasyFlow\nSize: " + size);
+    ovDetail.setText("Saved to Movies/EasyFlow\nSize: " + size
+        + (actual.isEmpty() ? "" : "\n" + actual));
     ovButton.setText("Close");
   }
 
@@ -348,7 +386,6 @@ public class MainActivity extends Activity {
 
   private void onOverlayButton() {
     if (!overlayFinished) {
-      // Cancel
       exporting = false;
       if (transformer != null) transformer.cancel();
       if (currentOut != null) currentOut.delete();
@@ -433,6 +470,13 @@ public class MainActivity extends Activity {
     final float fps = FPS_VALUES[fpsSpinner.getSelectedItemPosition()];
     final int bitrate = BITRATES[bitrateSpinner.getSelectedItemPosition()];
     final String label = QUALITY_LABELS[quality.getSelectedItemPosition()];
+
+    if (bitrate > 0 && maxBitrate > 0 && bitrate > maxBitrate) {
+      status.setText("Your phone's encoder allows at most " + (maxBitrate / 1000000)
+          + " Mbps. Pick a lower bitrate.");
+      return;
+    }
+
     final String summary = clips.size() + " clip(s)\n" + label + "  |  "
         + FPS_LABELS[fpsSpinner.getSelectedItemPosition()] + "  |  "
         + BITRATE_LABELS[bitrateSpinner.getSelectedItemPosition()];
@@ -440,7 +484,12 @@ public class MainActivity extends Activity {
     // Free the video player so the phone's encoder has room to start.
     releasePlayer();
     showOverlayExporting(summary);
+    exportStart = System.currentTimeMillis();
+    startExport(height, fps, bitrate, label, bitrate > 0);
+  }
 
+  private void startExport(final int height, final float fps, final int bitrate,
+                           final String label, final boolean cbr) {
     currentOut = new File(getCacheDir(), "project_" + System.currentTimeMillis() + ".mp4");
     final File out = currentOut;
 
@@ -462,8 +511,9 @@ public class MainActivity extends Activity {
     DefaultEncoderFactory.Builder ef = new DefaultEncoderFactory.Builder(this)
         .setEnableFallback(false);
     if (bitrate > 0) {
-      ef.setRequestedVideoEncoderSettings(
-          new VideoEncoderSettings.Builder().setBitrate(bitrate).build());
+      VideoEncoderSettings.Builder vb = new VideoEncoderSettings.Builder().setBitrate(bitrate);
+      if (cbr) vb.setBitrateMode(MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR);
+      ef.setRequestedVideoEncoderSettings(vb.build());
     }
 
     transformer = new Transformer.Builder(this)
@@ -472,21 +522,41 @@ public class MainActivity extends Activity {
           @Override
           public void onCompleted(Composition c, ExportResult result) {
             exporting = false;
-            saveToGallery(out, sizeOf(out));
+            saveToGallery(out, sizeOf(out), describe(result));
           }
 
           @Override
           public void onError(Composition c, ExportResult result, ExportException e) {
             out.delete();
+            String code = e.getErrorCodeName();
+            if (cbr && bitrate > 0 && code.contains("FORMAT_UNSUPPORTED")) {
+              // This phone can't do a fixed bitrate. Retry the normal way.
+              ovDetail.setText("Fixed bitrate not supported here. Retrying the normal way...");
+              startExport(height, fps, bitrate, label, false);
+              return;
+            }
             showOverlayError(friendlyError(e, label));
           }
         })
         .build();
 
     exporting = true;
-    exportStart = System.currentTimeMillis();
+    handler.removeCallbacks(poll);
     handler.post(poll);
     transformer.start(composition, out.getAbsolutePath());
+  }
+
+  private String describe(ExportResult r) {
+    String s = "";
+    if (r.durationMs > 0 && r.videoFrameCount > 0) {
+      s += String.format(java.util.Locale.US, "%.1f fps",
+          r.videoFrameCount * 1000.0 / r.durationMs);
+    }
+    if (r.averageVideoBitrate > 0) {
+      s += (s.isEmpty() ? "" : "  |  ")
+          + String.format(java.util.Locale.US, "%.1f Mbps", r.averageVideoBitrate / 1000000.0);
+    }
+    return s.isEmpty() ? "" : "Actual: " + s;
   }
 
   private String sizeOf(File f) {
@@ -521,7 +591,7 @@ public class MainActivity extends Activity {
     return msg + "\n\nCode: " + code;
   }
 
-  private void saveToGallery(File file, String size) {
+  private void saveToGallery(File file, String size, String actual) {
     runOnUiThread(() -> ovDetail.setText("Saving to gallery..."));
     new Thread(() -> {
       try {
@@ -539,7 +609,7 @@ public class MainActivity extends Activity {
         }
         file.delete();
         runOnUiThread(() -> {
-          showOverlayDone(size);
+          showOverlayDone(size, actual);
           status.setText("Done! Saved to Movies/EasyFlow (" + size + ")");
         });
       } catch (Exception e) {
@@ -562,4 +632,4 @@ public class MainActivity extends Activity {
     if (transformer != null) transformer.cancel();
     if (player != null) player.release();
   }
-      }
+    }
