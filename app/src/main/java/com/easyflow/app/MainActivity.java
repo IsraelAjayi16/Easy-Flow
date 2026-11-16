@@ -579,7 +579,7 @@ public class MainActivity extends Activity {
 
     exporting = true;
     handler.removeCallbacks(poll);
-    handler.post(poll);a
+    handler.post(poll);
     transformer.start(composition, out.getAbsolutePath());
   }
 
@@ -669,4 +669,4 @@ public class MainActivity extends Activity {
     if (transformer != null) transformer.cancel();
     if (player != null) player.release();
   }
-              }
+    }
