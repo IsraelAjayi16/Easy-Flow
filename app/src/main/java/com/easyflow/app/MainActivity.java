@@ -157,6 +157,7 @@ public class MainActivity extends Activity {
   private ExoPlayer player;
   private PlayerView playerView;
   private TextView status, limits;
+    private Spinner quality, fpsSpinner, bitrateSpinner, speedSpinner, volumeSpinner;
     private static final String[] VOLUME_LABELS = {
       "Muted", "25% vol", "50% vol", "100% vol", "150% vol", "200% vol"};
   private static final float[] VOLUME_VALUES = {0f, 0.25f, 0.5f, 1f, 1.5f, 2f};
