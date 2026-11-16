@@ -109,8 +109,10 @@ public class MainActivity extends Activity {
     final MediaItem item;
     final float speed;
     final float volume;
+        final long durationMs;
 
-    Clip(MediaItem item, float speed, float volume) {
+    Clip(MediaItem item, float speed, float volume, long durationMs) {
+      this.durationMs = durationMs;
       this.item = item;
       this.speed = speed;
       this.volume = volume;
@@ -135,6 +137,127 @@ public class MainActivity extends Activity {
       return C.TIME_UNSET;
     }
   }
+
+    // ---------- The timeline strip ----------
+  static class TimelineView extends View {
+    interface Listener {
+      void onSelect(int index);
+    }
+
+    private final Paint bg = new Paint();
+    private final Paint tick = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint blockPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint outline = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint label = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final RectF rect = new RectF();
+    private final float d;
+    private final List<Clip> data = new ArrayList<>();
+    private int selected = -1;
+    private Listener listener;
+
+    TimelineView(Context c) {
+      super(c);
+      d = c.getResources().getDisplayMetrics().density;
+      bg.setColor(Color.parseColor("#141230"));
+      tick.setColor(Color.parseColor("#9E9E9E"));
+      tick.setStrokeWidth(1f * d);
+      outline.setStyle(Paint.Style.STROKE);
+      outline.setStrokeWidth(2.5f * d);
+      outline.setColor(Color.WHITE);
+      label.setColor(Color.WHITE);
+      label.setTextSize(11f * d);
+      label.setTypeface(Typeface.DEFAULT_BOLD);
+    }
+
+    void setListener(Listener l) {
+      listener = l;
+    }
+
+    void setData(List<Clip> clips, int sel) {
+      data.clear();
+      data.addAll(clips);
+      selected = sel;
+      requestLayout();
+      invalidate();
+    }
+
+    private float widthOf(Clip c) {
+      float sec = (c.durationMs / c.speed) / 1000f;
+      return Math.max(64f * d, sec * 40f * d);
+    }
+
+    @Override
+    protected void onMeasure(int w, int h) {
+      float total = 24f * d;
+      for (Clip c : data) total += widthOf(c) + 4f * d;
+      int minW = getResources().getDisplayMetrics().widthPixels;
+      setMeasuredDimension((int) Math.max(total, minW), (int) (84f * d));
+    }
+
+    private String num(float v) {
+      return v == (int) v ? String.valueOf((int) v) : String.valueOf(v);
+    }
+
+    @Override
+    protected void onDraw(Canvas canvas) {
+      canvas.drawRect(0, 0, getWidth(), getHeight(), bg);
+      for (float tx = 8f * d; tx < getWidth(); tx += 40f * d) {
+        canvas.drawLine(tx, 0, tx, 8f * d, tick);
+      }
+      float left = 8f * d;
+      for (int i = 0; i < data.size(); i++) {
+        Clip c = data.get(i);
+        float w = widthOf(c);
+        rect.set(left, 18f * d, left + w, getHeight() - 8f * d);
+        blockPaint.setShader(new android.graphics.LinearGradient(
+            rect.left, rect.top, rect.right, rect.bottom,
+            Color.parseColor("#673AB7"), Color.parseColor("#9575CD"),
+            android.graphics.Shader.TileMode.CLAMP));
+        canvas.drawRoundRect(rect, 8f * d, 8f * d, blockPaint);
+        if (i == selected) canvas.drawRoundRect(rect, 8f * d, 8f * d, outline);
+        canvas.save();
+        canvas.clipRect(rect);
+        canvas.drawText("Clip " + (i + 1), rect.left + 8f * d, rect.top + 18f * d, label);
+        String info = String.format(java.util.Locale.US, "%.1fs", (c.durationMs / c.speed) / 1000f)
+            + "  " + num(c.speed) + "x  " + Math.round(c.volume * 100) + "%";
+        canvas.drawText(info, rect.left + 8f * d, rect.top + 36f * d, label);
+        canvas.restore();
+        left += w + 4f * d;
+      }
+    }
+
+    @Override
+    public boolean onTouchEvent(android.view.MotionEvent e) {
+      if (e.getAction() == android.view.MotionEvent.ACTION_DOWN) return true;
+      if (e.getAction() == android.view.MotionEvent.ACTION_UP) {
+        float left = 8f * d;
+        for (int i = 0; i < data.size(); i++) {
+          float w = widthOf(data.get(i));
+          if (e.getX() >= left && e.getX() <= left + w) {
+            if (listener != null) listener.onSelect(i);
+            return true;
+          }
+          left += w + 4f * d;
+        }
+        if (listener != null) listener.onSelect(-1);
+        return true;
+      }
+      return super.onTouchEvent(e);
+    }
+  }
+
+  private TimelineView timeline;
+  private TextView timelineInfo;
+  private int selectedClip = -1;
+
+  private void refreshTimeline() {
+    timeline.setData(clips, selectedClip);
+    long total = 0;
+    for (Clip c : clips) total += (long) (c.durationMs / c.speed);
+    timelineInfo.setText("Timeline: " + clips.size() + " clip(s), "
+        + String.format(java.util.Locale.US, "%.1f", total / 1000.0) + "s total after speed"
+        + (selectedClip >= 0 ? "   |   Clip " + (selectedClip + 1) + " selected" : ""));
+                    }
   
   // ---------- Options ----------
   private static final int PICK = 1;
@@ -227,6 +350,58 @@ public class MainActivity extends Activity {
     row.addView(setStart, half());
     row.addView(setEnd, half());
     root.addView(row, wrap());
+        
+    timelineInfo = new TextView(this);
+    timelineInfo.setTextSize(12);
+    timelineInfo.setPadding(24, 0, 24, 4);
+    root.addView(timelineInfo, wrap());
+
+    timeline = new TimelineView(this);
+    timeline.setListener(index -> {
+      selectedClip = index;
+      refreshTimeline();
+    });
+    
+    android.widget.HorizontalScrollView tlScroll = new android.widget.HorizontalScrollView(this);
+    tlScroll.setHorizontalScrollBarEnabled(false);
+    tlScroll.addView(timeline);
+    root.addView(tlScroll, wrap());
+
+    LinearLayout tlRow = new LinearLayout(this);
+    tlRow.setOrientation(LinearLayout.HORIZONTAL);
+    Button moveLeft = new Button(this);
+    moveLeft.setText("Move left");
+    Button moveRight = new Button(this);
+    moveRight.setText("Move right");
+    Button deleteClip = new Button(this);
+    deleteClip.setText("Delete");
+    tlRow.addView(moveLeft, half());
+    tlRow.addView(moveRight, half());
+    tlRow.addView(deleteClip, half());
+    root.addView(tlRow, wrap());
+
+    moveLeft.setOnClickListener(v -> {
+      if (selectedClip > 0) {
+        java.util.Collections.swap(clips, selectedClip, selectedClip - 1);
+        selectedClip--;
+        refreshTimeline();
+      }
+    });
+    moveRight.setOnClickListener(v -> {
+      if (selectedClip >= 0 && selectedClip < clips.size() - 1) {
+        java.util.Collections.swap(clips, selectedClip, selectedClip + 1);
+        selectedClip++;
+        refreshTimeline();
+      }
+    });
+    deleteClip.setOnClickListener(v -> {
+      if (selectedClip >= 0 && selectedClip < clips.size()) {
+        clips.remove(selectedClip);
+        selectedClip = -1;
+        refreshTimeline();
+      }
+    });
+    refreshTimeline();
 
     status = new TextView(this);
     status.setText("Pick a video first");
@@ -325,6 +500,8 @@ public class MainActivity extends Activity {
     clear.setOnClickListener(v -> {
       clips.clear();
       status.setText("Cleared. Clips in project: 0");
+            selectedClip = -1;
+      refreshTimeline();
     });
 
     export.setOnClickListener(v -> exportProject());
