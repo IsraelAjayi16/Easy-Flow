@@ -532,4 +532,34 @@ public class MainActivity extends Activity {
         cv.put(MediaStore.Video.Media.RELATIVE_PATH, "Movies/EasyFlow");
         Uri dest = cr.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, cv);
         try (InputStream in = new FileInputStream(file);
-             OutputStream os = cr.openOutputStream
+             OutputStream os = cr.openOutputStream(dest)) {
+          byte[] buf = new byte[8192];
+          int n;
+          while ((n = in.read(buf)) > 0) os.write(buf, 0, n);
+        }
+        file.delete();
+        runOnUiThread(() -> {
+          showOverlayDone(size);
+          status.setText("Done! Saved to Movies/EasyFlow (" + size + ")");
+        });
+      } catch (Exception e) {
+        runOnUiThread(() -> showOverlayError("Save failed: " + e.getMessage()));
+      }
+    }).start();
+  }
+
+  @Override
+  protected void onStop() {
+    super.onStop();
+    if (player != null) player.pause();
+  }
+
+  @Override
+  protected void onDestroy() {
+    super.onDestroy();
+    exporting = false;
+    handler.removeCallbacksAndMessages(null);
+    if (transformer != null) transformer.cancel();
+    if (player != null) player.release();
+  }
+      }
