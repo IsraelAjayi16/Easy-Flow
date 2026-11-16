@@ -158,8 +158,8 @@ public class MainActivity extends Activity {
   private PlayerView playerView;
   private TextView status, limits;
     private static final String[] VOLUME_LABELS = {
-      "Muted", "25% vol", "50% vol", "100% vol", "150% vol", "200% vol", "250% vol", "300% vol", "350% vol", "400% vol"};
-  private static final float[] VOLUME_VALUES = {0f, 0.25f, 0.5f, 1f, 1.5f, 2f, 2.5f, 3f, 3.5f, 4f};
+      "Muted", "25% vol", "50% vol", "100% vol", "150% vol", "200% vol"};
+  private static final float[] VOLUME_VALUES = {0f, 0.25f, 0.5f, 1f, 1.5f, 2f};
   private Uri videoUri;
   private long startMs = 0;
   private long endMs = 0;
