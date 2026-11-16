@@ -29,6 +29,8 @@ import android.widget.Spinner;
 import android.widget.TextView;
 import androidx.media3.common.Effect;
 import androidx.media3.common.MediaItem;
+import androidx.media3.common.C;
+import androidx.media3.common.audio.SpeedProvider;
 import androidx.media3.common.audio.AudioProcessor;
 import androidx.media3.common.audio.SonicAudioProcessor;
 import androidx.media3.effect.FrameDropEffect;
@@ -111,6 +113,25 @@ public class MainActivity extends Activity {
     }
   }
 
+  // ---------- One speed for a whole clip ----------
+  static class ConstantSpeed implements SpeedProvider {
+    private final float speed;
+
+    ConstantSpeed(float speed) {
+      this.speed = speed;
+    }
+
+    @Override
+    public float getSpeed(long timeUs) {
+      return speed;
+    }
+
+    @Override
+    public long getNextSpeedChangeTimeUs(long timeUs) {
+      return C.TIME_UNSET;
+    }
+  }
+  
   // ---------- Options ----------
   private static final int PICK = 1;
   private static final String[] QUALITY_LABELS = {
@@ -530,11 +551,11 @@ public class MainActivity extends Activity {
     for (Clip clip : clips) {
       List<Effect> videoEffects = new ArrayList<>();
       List<AudioProcessor> audioEffects = new ArrayList<>();
-      if (clip.speed != 1f) {
-        SonicAudioProcessor sonic = new SonicAudioProcessor();
-        sonic.setSpeed(clip.speed);
-        audioEffects.add(sonic);
-        videoEffects.add(new SpeedChangeEffect(clip.speed));
+            if (clip.speed != 1f) {
+        android.util.Pair<AudioProcessor, Effect> pair =
+            Effects.createExperimentalSpeedChangingEffect(new ConstantSpeed(clip.speed));
+        audioEffects.add(pair.first);
+        videoEffects.add(pair.second);
       }
       if (fps > 0 && useFps) videoEffects.add(FrameDropEffect.createDefaultFrameDropEffect(fps));
       if (height > 0) videoEffects.add(Presentation.createForHeight(height));
