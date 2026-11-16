@@ -145,10 +145,10 @@ public class MainActivity extends Activity {
       "Auto bitrate", "1 Mbps", "2 Mbps", "4 Mbps", "8 Mbps", "16 Mbps", "30 Mbps", "50 Mbps"};
   private static final int[] BITRATES = {
       0, 1000000, 2000000, 4000000, 8000000, 16000000, 30000000, 50000000};
-  private static final String[] SPEED_LABELS = {
-      "0.25x", "0.5x", "0.75x", "1x speed", "1.5x", "2x", "3x", "4x"};
-  private static final float[] SPEED_VALUES = {0.25f, 0.5f, 0.75f, 1f, 1.5f, 2f, 3f, 4f};
-
+    private static final String[] SPEED_LABELS = {
+      "0.1x", "0.25x", "0.5x", "0.75x", "1x speed", "1.5x", "2x", "3x", "4x", "5x", "6x", "8x", "10x"};
+  private static final float[] SPEED_VALUES = {
+      0.1f, 0.25f, 0.5f, 0.75f, 1f, 1.5f, 2f, 3f, 4f, 5f, 6f, 8f, 10f};
   // ---------- State ----------
   private ExoPlayer player;
   private PlayerView playerView;
@@ -229,7 +229,20 @@ public class MainActivity extends Activity {
     LinearLayout row2 = new LinearLayout(this);
     row2.setOrientation(LinearLayout.HORIZONTAL);
     speedSpinner = makeSpinner(SPEED_LABELS);
-    speedSpinner.setSelection(3); // 1x speed
+        speedSpinner.setSelection(4); // 1x speed
+    speedSpinner.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener() {
+      @Override
+      public void onItemSelected(android.widget.AdapterView<?> parent, View view, int position, long id) {
+        if (player != null) {
+          player.setPlaybackParameters(
+              new androidx.media3.common.PlaybackParameters(SPEED_VALUES[position]));
+        }
+      }
+
+      @Override
+      public void onNothingSelected(android.widget.AdapterView<?> parent) {}
+    });
+    
     Button addClip = new Button(this);
     addClip.setText("Add clip");
     Button clear = new Button(this);
@@ -458,7 +471,9 @@ public class MainActivity extends Activity {
       playerView.setPlayer(player);
     }
     player.setMediaItem(MediaItem.fromUri(uri));
-    player.prepare();
+        player.prepare();
+    player.setPlaybackParameters(new androidx.media3.common.PlaybackParameters(
+        SPEED_VALUES[speedSpinner.getSelectedItemPosition()]));
     player.play();
     startMs = 0;
     endMs = 0;
