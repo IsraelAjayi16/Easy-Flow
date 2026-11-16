@@ -532,7 +532,8 @@ public class MainActivity extends Activity {
           .build());
     }
     int sp = speedSpinner.getSelectedItemPosition();
-    clips.add(new Clip(mib.build(), SPEED_VALUES[sp]));
+    int vp = volumeSpinner.getSelectedItemPosition();
+    clips.add(new Clip(mib.build(), SPEED_VALUES[sp], VOLUME_VALUES[vp]));
     startMs = 0;
     endMs = 0;
     status.setText((trimmed ? "Trimmed clip" : "Full clip") + " added at "
@@ -593,7 +594,12 @@ public class MainActivity extends Activity {
         audioEffects.add(pair.first);
         videoEffects.add(pair.second);
       }
-      if (fps > 0 && useFps) videoEffects.add(FrameDropEffect.createDefaultFrameDropEffect(fps));
+            if (clip.volume != 1f) {
+        ChannelMixingAudioProcessor mixer = new ChannelMixingAudioProcessor();
+        mixer.putChannelMixingMatrix(ChannelMixingMatrix.create(1, 1).scaleBy(clip.volume));
+        mixer.putChannelMixingMatrix(ChannelMixingMatrix.create(2, 2).scaleBy(clip.volume));
+        audioEffects.add(mixer);
+      }
       if (height > 0) videoEffects.add(Presentation.createForHeight(height));
 
       EditedMediaItem.Builder eb = new EditedMediaItem.Builder(clip.item);
