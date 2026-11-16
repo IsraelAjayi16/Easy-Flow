@@ -30,8 +30,10 @@ import android.widget.TextView;
 import androidx.media3.common.Effect;
 import androidx.media3.common.MediaItem;
 import androidx.media3.common.audio.AudioProcessor;
+import androidx.media3.common.audio.SonicAudioProcessor;
 import androidx.media3.effect.FrameDropEffect;
 import androidx.media3.effect.Presentation;
+import androidx.media3.effect.SpeedChangeEffect;
 import androidx.media3.exoplayer.ExoPlayer;
 import androidx.media3.transformer.Composition;
 import androidx.media3.transformer.DefaultEncoderFactory;
@@ -49,7 +51,6 @@ import java.io.FileInputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 
 public class MainActivity extends Activity {
@@ -99,6 +100,17 @@ public class MainActivity extends Activity {
     }
   }
 
+  // ---------- A clip in the project: the video part plus its speed ----------
+  static class Clip {
+    final MediaItem item;
+    final float speed;
+
+    Clip(MediaItem item, float speed) {
+      this.item = item;
+      this.speed = speed;
+    }
+  }
+
   // ---------- Options ----------
   private static final int PICK = 1;
   private static final String[] QUALITY_LABELS = {
@@ -112,18 +124,22 @@ public class MainActivity extends Activity {
       "Auto bitrate", "1 Mbps", "2 Mbps", "4 Mbps", "8 Mbps", "16 Mbps", "30 Mbps", "50 Mbps"};
   private static final int[] BITRATES = {
       0, 1000000, 2000000, 4000000, 8000000, 16000000, 30000000, 50000000};
+  private static final String[] SPEED_LABELS = {
+      "0.25x", "0.5x", "0.75x", "1x speed", "1.5x", "2x", "3x", "4x"};
+  private static final float[] SPEED_VALUES = {0.25f, 0.5f, 0.75f, 1f, 1.5f, 2f, 3f, 4f};
 
   // ---------- State ----------
   private ExoPlayer player;
   private PlayerView playerView;
   private TextView status, limits;
-  private Spinner quality, fpsSpinner, bitrateSpinner;
+  private Spinner quality, fpsSpinner, bitrateSpinner, speedSpinner;
   private Uri videoUri;
   private long startMs = 0;
   private long endMs = 0;
-  private final List<MediaItem> clips = new ArrayList<>();
+  private final List<Clip> clips = new ArrayList<>();
   private int maxBitrate = 0;
   private String limitsText = "";
+  private String adjustNote = "";
 
   private Transformer transformer;
   private File currentOut;
@@ -191,10 +207,13 @@ public class MainActivity extends Activity {
 
     LinearLayout row2 = new LinearLayout(this);
     row2.setOrientation(LinearLayout.HORIZONTAL);
+    speedSpinner = makeSpinner(SPEED_LABELS);
+    speedSpinner.setSelection(3); // 1x speed
     Button addClip = new Button(this);
     addClip.setText("Add clip");
     Button clear = new Button(this);
     clear.setText("Clear all");
+    row2.addView(speedSpinner, half());
     row2.addView(addClip, half());
     row2.addView(clear, half());
     root.addView(row2, wrap());
@@ -369,8 +388,10 @@ public class MainActivity extends Activity {
     ring.setProgress(1f, true);
     ovTitle.setText("Done!");
     ovPercent.setText("100%");
-    ovDetail.setText("Saved to Movies/EasyFlow\nSize: " + size
-        + (actual.isEmpty() ? "" : "\n" + actual));
+    String text = "Saved to Movies/EasyFlow\nSize: " + size;
+    if (!actual.isEmpty()) text += "\n" + actual;
+    if (!adjustNote.isEmpty()) text += "\n\nYour phone needed changes:\n" + adjustNote;
+    ovDetail.setText(text);
     ovButton.setText("Close");
   }
 
@@ -453,11 +474,13 @@ public class MainActivity extends Activity {
           .setEndPositionMs(endMs)
           .build());
     }
-    clips.add(mib.build());
+    int sp = speedSpinner.getSelectedItemPosition();
+    clips.add(new Clip(mib.build(), SPEED_VALUES[sp]));
     startMs = 0;
     endMs = 0;
-    status.setText((trimmed ? "Trimmed clip" : "Full clip") + " added. Clips in project: "
-        + clips.size() + ". Pick the next video, or tap Export.");
+    status.setText((trimmed ? "Trimmed clip" : "Full clip") + " added at "
+        + SPEED_LABELS[sp] + ". Clips in project: " + clips.size()
+        + ". Pick the next video, or tap Export.");
   }
 
   // ---------- Export ----------
@@ -483,25 +506,42 @@ public class MainActivity extends Activity {
 
     // Free the video player so the phone's encoder has room to start.
     releasePlayer();
+    adjustNote = "";
     showOverlayExporting(summary);
     exportStart = System.currentTimeMillis();
-    startExport(height, fps, bitrate, label, bitrate > 0);
+    startExport(height, fps, bitrate, label, 0);
   }
 
+  // attempt 0: exactly what you asked for
+  // attempt 1: same, but without the fixed-bitrate mode
+  // attempt 2: let the phone pick the nearest bitrate/size it accepts
+  // attempt 3: also leave the frame rate unchanged
   private void startExport(final int height, final float fps, final int bitrate,
-                           final String label, final boolean cbr) {
+                           final String label, final int attempt) {
     currentOut = new File(getCacheDir(), "project_" + System.currentTimeMillis() + ".mp4");
     final File out = currentOut;
 
-    List<Effect> videoEffects = new ArrayList<>();
-    if (fps > 0) videoEffects.add(FrameDropEffect.createDefaultFrameDropEffect(fps));
-    if (height > 0) videoEffects.add(Presentation.createForHeight(height));
+    final boolean cbr = attempt == 0 && bitrate > 0;
+    final boolean fallback = attempt >= 2;
+    final int useBitrate = attempt >= 2 ? 0 : bitrate;
+    final boolean useFps = attempt < 3;
 
     List<EditedMediaItem> items = new ArrayList<>();
-    for (MediaItem m : clips) {
-      EditedMediaItem.Builder eb = new EditedMediaItem.Builder(m);
-      if (!videoEffects.isEmpty()) {
-        eb.setEffects(new Effects(Collections.<AudioProcessor>emptyList(), videoEffects));
+    for (Clip clip : clips) {
+      List<Effect> videoEffects = new ArrayList<>();
+      List<AudioProcessor> audioEffects = new ArrayList<>();
+      if (clip.speed != 1f) {
+        SonicAudioProcessor sonic = new SonicAudioProcessor();
+        sonic.setSpeed(clip.speed);
+        audioEffects.add(sonic);
+        videoEffects.add(new SpeedChangeEffect(clip.speed));
+      }
+      if (fps > 0 && useFps) videoEffects.add(FrameDropEffect.createDefaultFrameDropEffect(fps));
+      if (height > 0) videoEffects.add(Presentation.createForHeight(height));
+
+      EditedMediaItem.Builder eb = new EditedMediaItem.Builder(clip.item);
+      if (!videoEffects.isEmpty() || !audioEffects.isEmpty()) {
+        eb.setEffects(new Effects(audioEffects, videoEffects));
       }
       items.add(eb.build());
     }
@@ -509,9 +549,9 @@ public class MainActivity extends Activity {
         new EditedMediaItemSequence(items)).build();
 
     DefaultEncoderFactory.Builder ef = new DefaultEncoderFactory.Builder(this)
-        .setEnableFallback(false);
-    if (bitrate > 0) {
-      VideoEncoderSettings.Builder vb = new VideoEncoderSettings.Builder().setBitrate(bitrate);
+        .setEnableFallback(fallback);
+    if (useBitrate > 0) {
+      VideoEncoderSettings.Builder vb = new VideoEncoderSettings.Builder().setBitrate(useBitrate);
       if (cbr) vb.setBitrateMode(MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR);
       ef.setRequestedVideoEncoderSettings(vb.build());
     }
@@ -520,19 +560,16 @@ public class MainActivity extends Activity {
         .setEncoderFactory(ef.build())
         .addListener(new Transformer.Listener() {
           @Override
-          public void onCompleted(Composition c, ExportResult result) {
-            exporting = false;
-            saveToGallery(out, sizeOf(out), describe(result));
-          }
-
-          @Override
-          public void onError(Composition c, ExportResult result, ExportException e) {
+          public void onCompleted(Composition c, ExportResult result, ExportException e) {
             out.delete();
             String code = e.getErrorCodeName();
-            if (cbr && bitrate > 0 && code.contains("FORMAT_UNSUPPORTED")) {
-              // This phone can't do a fixed bitrate. Retry the normal way.
-              ovDetail.setText("Fixed bitrate not supported here. Retrying the normal way...");
-              startExport(height, fps, bitrate, label, false);
+            boolean retryable = code.contains("FORMAT_UNSUPPORTED") || code.contains("INIT_FAILED");
+            if (retryable && attempt < 3) {
+              if (attempt == 1) adjustNote += "- Bitrate set to automatic\n";
+              if (attempt == 2) adjustNote += "- Frame rate left unchanged\n";
+              ovDetail.setText("Your phone rejected those settings. Trying a safer setup ("
+                  + (attempt + 1) + " of 3)...");
+              startExport(height, fps, bitrate, label, attempt + 1);
               return;
             }
             showOverlayError(friendlyError(e, label));
@@ -542,7 +579,7 @@ public class MainActivity extends Activity {
 
     exporting = true;
     handler.removeCallbacks(poll);
-    handler.post(poll);
+    handler.post(poll);a
     transformer.start(composition, out.getAbsolutePath());
   }
 
@@ -581,8 +618,8 @@ public class MainActivity extends Activity {
       msg = "The phone's encoder couldn't start. It may be busy or low on memory. "
           + "Close other apps and try again.";
     } else if (code.contains("FORMAT_UNSUPPORTED")) {
-      msg = "Your phone doesn't support this combination of size ("
-          + label + "), frame rate and bitrate. Try lower settings.";
+      msg = "Your phone doesn't support " + label
+          + " even after trying safer settings. Try a lower quality.";
     } else if (code.contains("DECOD")) {
       msg = "Your phone can't read one of these videos (format not supported).";
     } else {
@@ -632,4 +669,4 @@ public class MainActivity extends Activity {
     if (transformer != null) transformer.cancel();
     if (player != null) player.release();
   }
-    }
+              }
