@@ -305,10 +305,8 @@ public class MainActivity extends Activity {
       "Muted", "25% vol", "50% vol", "100% vol", "150% vol", "200% vol"};
   private static final float[] VOLUME_VALUES = {0f, 0.25f, 0.5f, 1f, 1.5f, 2f};
   // -1 means "pitch follows speed"
-  private static final String[] PITCH_LABELS = {
-      "Pitch natural", "Pitch follows speed", "0.5x pitch", "0.75x pitch",
-      "1.25x pitch", "1.5x pitch", "2x pitch"};
-  private static final float[] PITCH_VALUES = {1f, -1f, 0.5f, 0.75f, 1.25f, 1.5f, 2f};
+    private static final String[] PITCH_LABELS = {"Pitch natural", "Pitch follows speed"};
+  private static final float[] PITCH_VALUES = {1f, -1f};
 
   // ---------- State ----------
   private ExoPlayer player;
