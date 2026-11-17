@@ -1109,6 +1109,7 @@ public class MainActivity extends Activity {
 
   private void refreshTimeline() {
     timeline.setData(clips, selectedClip);
+    if (musicLane != null) musicLane.setData(clips, musicName);
     long total = 0;
     for (Clip c : clips) total += (long) (c.durationMs() / c.speed);
     timelineInfo.setText("Timeline: " + clips.size() + " clip(s), "
@@ -1117,6 +1118,18 @@ public class MainActivity extends Activity {
   }
 
   // ---------- Preview ----------
+    private String displayName(Uri uri) {
+    try (android.database.Cursor cur = getContentResolver().query(uri, null, null, null, null)) {
+      if (cur != null && cur.moveToFirst()) {
+        int i = cur.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME);
+        if (i >= 0) return cur.getString(i);
+      }
+    } catch (Exception e) {
+      // ignore
+    }
+    return "music";
+    }
+  
   private boolean isImageUri(Uri uri) {
     String type = getContentResolver().getType(uri);
     return type != null && type.startsWith("image/");
@@ -1125,7 +1138,14 @@ public class MainActivity extends Activity {
   @Override
   protected void onActivityResult(int req, int res, Intent data) {
     super.onActivityResult(req, res, data);
-    if (req == PICK && res == RESULT_OK && data != null && data.getData() != null) {
+        if (req == 2 && res == RESULT_OK && data != null && data.getData() != null) {
+      musicUri = data.getData();
+      musicName = displayName(musicUri);
+      refreshTimeline();
+      status.setText("Music added: " + musicName + ". It plays under the whole video in the export.");
+      return;
+      }
+    
       videoUri = data.getData();
       startMs = 0;
       endMs = 0;
@@ -1349,8 +1369,33 @@ public class MainActivity extends Activity {
       }
       items.add(eb.build());
     }
-    Composition composition = new Composition.Builder(
-        new EditedMediaItemSequence(items)).build();
+        EditedMediaItemSequence videoSequence = new EditedMediaItemSequence(items);
+    Composition composition;
+    if (musicUri != null) {
+      long totalMs = 0;
+      for (Clip cl : clips) totalMs += (long) (cl.durationMs() / cl.speed);
+      MediaItem.Builder mb = new MediaItem.Builder().setUri(musicUri);
+      mb.setClippingConfiguration(new MediaItem.ClippingConfiguration.Builder()
+          .setStartPositionMs(0)
+          .setEndPositionMs(Math.max(1000, totalMs))
+          .build());
+      EditedMediaItem.Builder musicItem = new EditedMediaItem.Builder(mb.build());
+      musicItem.setRemoveVideo(true);
+      float mv = VOLUME_VALUES[musicVolSpinner.getSelectedItemPosition()];
+      if (mv != 1f) {
+        List<AudioProcessor> musicEffects = new ArrayList<>();
+        ChannelMixingAudioProcessor musicMixer = new ChannelMixingAudioProcessor();
+        musicMixer.putChannelMixingMatrix(ChannelMixingMatrix.create(1, 1).scaleBy(mv));
+        musicMixer.putChannelMixingMatrix(ChannelMixingMatrix.create(2, 2).scaleBy(mv));
+        musicEffects.add(musicMixer);
+        musicItem.setEffects(new Effects(musicEffects, new ArrayList<Effect>()));
+      }
+      EditedMediaItemSequence musicSequence = new EditedMediaItemSequence(
+          java.util.Collections.singletonList(musicItem.build()));
+      composition = new Composition.Builder(videoSequence, musicSequence).build();
+    } else {
+      composition = new Composition.Builder(videoSequence).build();
+        }
 
     DefaultEncoderFactory.Builder ef = new DefaultEncoderFactory.Builder(this)
         .setEnableFallback(fallback);
