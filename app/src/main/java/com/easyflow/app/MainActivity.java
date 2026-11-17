@@ -5,13 +5,12 @@ import android.content.ContentResolver;
 import android.content.ContentValues;
 import android.content.Context;
 import android.content.Intent;
-import android.graphics.Canvas;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
-import android.graphics.Path;
-import android.util.LruCache;
+import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
+import android.graphics.Path;
 import android.graphics.RectF;
 import android.graphics.Typeface;
 import android.media.MediaCodecInfo;
@@ -22,6 +21,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.MediaStore;
+import android.util.LruCache;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -62,8 +62,8 @@ import java.io.FileInputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.ArrayList;
-import java.util.List;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -146,6 +146,10 @@ public class MainActivity extends Activity {
       return new Clip(uri, s, e, isImage, speed, volume, pitch);
     }
 
+    Clip withParams(float s, float v, float p) {
+      return new Clip(uri, srcStart, srcEnd, isImage, s, v, p);
+    }
+
     MediaItem item() {
       MediaItem.Builder b = new MediaItem.Builder().setUri(uri);
       if (!isImage) {
@@ -174,120 +178,6 @@ public class MainActivity extends Activity {
     @Override
     public long getNextSpeedChangeTimeUs(long timeUs) {
       return C.TIME_UNSET;
-    }
-  }
-
-  // ---------- The timeline strip ----------
-  static class TimelineView extends View {
-    interface Listener {
-      void onSelect(int index);
-    }
-
-    private final Paint bg = new Paint();
-    private final Paint tick = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final Paint blockPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final Paint outline = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final Paint label = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final RectF rect = new RectF();
-    private final float d;
-    private final List<Clip> data = new ArrayList<>();
-    private int selected = -1;
-    private Listener listener;
-
-    TimelineView(Context c) {
-      super(c);
-      d = c.getResources().getDisplayMetrics().density;
-      bg.setColor(Color.parseColor("#141230"));
-      tick.setColor(Color.parseColor("#9E9E9E"));
-      tick.setStrokeWidth(1f * d);
-      outline.setStyle(Paint.Style.STROKE);
-      outline.setStrokeWidth(2f * d);
-      outline.setColor(Color.WHITE);
-      label.setColor(Color.WHITE);
-      label.setTextSize(10f * d);
-      label.setTypeface(Typeface.DEFAULT_BOLD);
-    }
-
-    void setListener(Listener l) {
-      listener = l;
-    }
-
-    void setData(List<Clip> clips, int sel) {
-      data.clear();
-      data.addAll(clips);
-      selected = sel;
-      requestLayout();
-      invalidate();
-    }
-
-    private float widthOf(Clip c) {
-      float sec = (c.durationMs() / c.speed) / 1000f;
-      return Math.max(56f * d, sec * 40f * d);
-    }
-
-    @Override
-    protected void onMeasure(int w, int h) {
-      float total = 24f * d;
-      for (Clip c : data) total += widthOf(c) + 3f * d;
-      int minW = getResources().getDisplayMetrics().widthPixels;
-      setMeasuredDimension((int) Math.max(total, minW), (int) (56f * d));
-    }
-
-    private String num(float v) {
-      return v == (int) v ? String.valueOf((int) v) : String.valueOf(v);
-    }
-
-    @Override
-    protected void onDraw(Canvas canvas) {
-      canvas.drawRect(0, 0, getWidth(), getHeight(), bg);
-      for (float tx = 8f * d; tx < getWidth(); tx += 40f * d) {
-        canvas.drawLine(tx, 0, tx, 7f * d, tick);
-      }
-      float left = 8f * d;
-      for (int i = 0; i < data.size(); i++) {
-        Clip c = data.get(i);
-        float w = widthOf(c);
-        rect.set(left, 12f * d, left + w, getHeight() - 4f * d);
-        blockPaint.setShader(new android.graphics.LinearGradient(
-            rect.left, rect.top, rect.right, rect.bottom,
-            Color.parseColor("#673AB7"), Color.parseColor("#9575CD"),
-            android.graphics.Shader.TileMode.CLAMP));
-        canvas.drawRoundRect(rect, 6f * d, 6f * d, blockPaint);
-        if (i == selected) canvas.drawRoundRect(rect, 6f * d, 6f * d, outline);
-        canvas.save();
-        canvas.clipRect(rect);
-        canvas.drawText((c.isImage ? "Image " : "Clip ") + (i + 1),
-            rect.left + 6f * d, rect.top + 14f * d, label);
-        String info;
-        if (c.isImage) {
-          info = String.format(java.util.Locale.US, "%.1fs", c.durationMs() / 1000f);
-        } else {
-          info = String.format(java.util.Locale.US, "%.1fs", (c.durationMs() / c.speed) / 1000f)
-              + "  " + num(c.speed) + "x  " + Math.round(c.volume * 100) + "%";
-        }
-        canvas.drawText(info, rect.left + 6f * d, rect.top + 28f * d, label);
-        canvas.restore();
-        left += w + 3f * d;
-      }
-    }
-
-    @Override
-    public boolean onTouchEvent(android.view.MotionEvent e) {
-      if (e.getAction() == android.view.MotionEvent.ACTION_DOWN) return true;
-      if (e.getAction() == android.view.MotionEvent.ACTION_UP) {
-        float left = 8f * d;
-        for (int i = 0; i < data.size(); i++) {
-          float w = widthOf(data.get(i));
-          if (e.getX() >= left && e.getX() <= left + w) {
-            if (listener != null) listener.onSelect(i);
-            return true;
-          }
-          left += w + 3f * d;
-        }
-        if (listener != null) listener.onSelect(-1);
-        return true;
-      }
-      return super.onTouchEvent(e);
     }
   }
 
@@ -523,9 +413,9 @@ public class MainActivity extends Activity {
       }
       return super.onTouchEvent(e);
     }
-    }
+  }
 
-    // ---------- Music lane under the timeline ----------
+  // ---------- Music lane under the timeline ----------
   static class MusicLaneView extends View {
     private final Paint barPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint textPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -580,10 +470,11 @@ public class MainActivity extends Activity {
       canvas.drawText("Music: " + name, bar.left + 6f * d, bar.centerY() + 3.5f * d, textPaint);
       canvas.restore();
     }
-              }
-                            
+  }
+
   // ---------- Options ----------
   private static final int PICK = 1;
+  private static final int PICK_MUSIC = 2;
   private static final long IMAGE_MS = 3000;
   private static final String[] QUALITY_LABELS = {
       "Original size", "180p", "240p", "360p", "480p",
@@ -604,7 +495,7 @@ public class MainActivity extends Activity {
       "Muted", "25% vol", "50% vol", "100% vol", "150% vol", "200% vol"};
   private static final float[] VOLUME_VALUES = {0f, 0.25f, 0.5f, 1f, 1.5f, 2f};
   // -1 means "pitch follows speed"
-    private static final String[] PITCH_LABELS = {"Pitch natural", "Pitch follows speed"};
+  private static final String[] PITCH_LABELS = {"Pitch natural", "Pitch follows speed"};
   private static final float[] PITCH_VALUES = {1f, -1f};
 
   // ---------- State ----------
@@ -615,6 +506,7 @@ public class MainActivity extends Activity {
   private TextView timeText, status, limits;
   private Button playBtn;
   private Spinner quality, fpsSpinner, bitrateSpinner, speedSpinner, volumeSpinner, pitchSpinner;
+  private Spinner musicVolSpinner;
   private Uri videoUri;       // the file shown in the preview
   private Uri loadedUri;      // the video currently loaded in the player
   private boolean previewIsImage = false;
@@ -627,13 +519,12 @@ public class MainActivity extends Activity {
   private String adjustNote = "";
 
   private FilmstripView timeline;
+  private MusicLaneView musicLane;
   private TextView timelineInfo;
   private int selectedClip = -1;
   private Uri musicUri;
   private String musicName = "";
-  private Spinner musicVolSpinner;
-  private MusicLaneView musicLane;
-  
+
   private Transformer transformer;
   private File currentOut;
   private boolean exporting = false;
@@ -777,13 +668,13 @@ public class MainActivity extends Activity {
       refreshTimeline();
       if (index >= 0 && index < clips.size()) showClip(clips.get(index));
     });
-    android.widget.HorizontalScrollView tlScroll = new android.widget.HorizontalScrollView(this);
-    tlScroll.setHorizontalScrollBarEnabled(false);
-        LinearLayout tlColumn = new LinearLayout(this);
+    musicLane = new MusicLaneView(this);
+    LinearLayout tlColumn = new LinearLayout(this);
     tlColumn.setOrientation(LinearLayout.VERTICAL);
     tlColumn.addView(timeline);
-    musicLane = new MusicLaneView(this);
     tlColumn.addView(musicLane);
+    android.widget.HorizontalScrollView tlScroll = new android.widget.HorizontalScrollView(this);
+    tlScroll.setHorizontalScrollBarEnabled(false);
     tlScroll.addView(tlColumn);
     root.addView(tlScroll, wrap());
 
@@ -803,13 +694,13 @@ public class MainActivity extends Activity {
     tlRow.addView(deleteClip, half());
     root.addView(tlRow, wrap());
 
-    // Speed, volume and pitch
-    android.widget.AdapterView.OnItemSelectedListener previewListener =
+    // Speed, volume and pitch: they edit the selected clip
+    android.widget.AdapterView.OnItemSelectedListener paramsListener =
         new android.widget.AdapterView.OnItemSelectedListener() {
           @Override
           public void onItemSelected(android.widget.AdapterView<?> parent, View view,
                                      int position, long id) {
-            applyPreviewParams();
+            onParamsChanged();
           }
 
           @Override
@@ -821,9 +712,9 @@ public class MainActivity extends Activity {
     volumeSpinner = makeSpinner(VOLUME_LABELS);
     volumeSpinner.setSelection(3); // 100%
     pitchSpinner = makeSpinner(PITCH_LABELS);
-    speedSpinner.setOnItemSelectedListener(previewListener);
-    volumeSpinner.setOnItemSelectedListener(previewListener);
-    pitchSpinner.setOnItemSelectedListener(previewListener);
+    speedSpinner.setOnItemSelectedListener(paramsListener);
+    volumeSpinner.setOnItemSelectedListener(paramsListener);
+    pitchSpinner.setOnItemSelectedListener(paramsListener);
 
     LinearLayout rowSV = new LinearLayout(this);
     rowSV.setOrientation(LinearLayout.HORIZONTAL);
@@ -842,6 +733,7 @@ public class MainActivity extends Activity {
     row2.addView(clear, half());
     root.addView(row2, wrap());
 
+    // Music
     Button addMusic = new Button(this);
     addMusic.setText("Add music");
     Button removeMusic = new Button(this);
@@ -854,18 +746,6 @@ public class MainActivity extends Activity {
     rowM.addView(removeMusic, half());
     rowM.addView(musicVolSpinner, half());
     root.addView(rowM, wrap());
-    addMusic.setOnClickListener(v -> {
-      Intent mi = new Intent(Intent.ACTION_OPEN_DOCUMENT);
-      mi.addCategory(Intent.CATEGORY_OPENABLE);
-      mi.setType("audio/*");
-      startActivityForResult(mi, 2);
-    });
-    removeMusic.setOnClickListener(v -> {
-      musicUri = null;
-      musicName = "";
-      refreshTimeline();
-      status.setText("Music removed.");
-    });
 
     LinearLayout row3 = new LinearLayout(this);
     row3.setOrientation(LinearLayout.HORIZONTAL);
@@ -899,6 +779,20 @@ public class MainActivity extends Activity {
       i.setType("*/*");
       i.putExtra(Intent.EXTRA_MIME_TYPES, new String[] {"video/*", "image/*"});
       startActivityForResult(i, PICK);
+    });
+
+    addMusic.setOnClickListener(v -> {
+      Intent mi = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+      mi.addCategory(Intent.CATEGORY_OPENABLE);
+      mi.setType("audio/*");
+      startActivityForResult(mi, PICK_MUSIC);
+    });
+
+    removeMusic.setOnClickListener(v -> {
+      musicUri = null;
+      musicName = "";
+      refreshTimeline();
+      status.setText("Music removed.");
     });
 
     playBtn.setOnClickListener(v -> {
@@ -1003,7 +897,6 @@ public class MainActivity extends Activity {
   private LinearLayout.LayoutParams half() {
     return new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
   }
-
   private void buildOverlay(FrameLayout parent) {
     float d = getResources().getDisplayMetrics().density;
 
@@ -1119,8 +1012,29 @@ public class MainActivity extends Activity {
         + (selectedClip >= 0 ? "   |   Clip " + (selectedClip + 1) + " selected" : ""));
   }
 
+  // ---------- Speed, volume and pitch dropdowns ----------
+  private int indexOf(float[] values, float v) {
+    for (int i = 0; i < values.length; i++) {
+      if (Math.abs(values[i] - v) < 0.001f) return i;
+    }
+    return 0;
+  }
+
+  // Dropdown changes edit the selected clip. With no clip selected they only affect the preview.
+  private void onParamsChanged() {
+    if (selectedClip >= 0 && selectedClip < clips.size() && !clips.get(selectedClip).isImage) {
+      float sp = SPEED_VALUES[speedSpinner.getSelectedItemPosition()];
+      float vol = VOLUME_VALUES[volumeSpinner.getSelectedItemPosition()];
+      float pv = PITCH_VALUES[pitchSpinner.getSelectedItemPosition()];
+      float pitch = pv < 0 ? sp : pv;
+      clips.set(selectedClip, clips.get(selectedClip).withParams(sp, vol, pitch));
+      refreshTimeline();
+    }
+    applyPreviewParams();
+  }
+
   // ---------- Preview ----------
-    private String displayName(Uri uri) {
+  private String displayName(Uri uri) {
     try (android.database.Cursor cur = getContentResolver().query(uri, null, null, null, null)) {
       if (cur != null && cur.moveToFirst()) {
         int i = cur.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME);
@@ -1130,8 +1044,8 @@ public class MainActivity extends Activity {
       // ignore
     }
     return "music";
-    }
-  
+  }
+
   private boolean isImageUri(Uri uri) {
     String type = getContentResolver().getType(uri);
     return type != null && type.startsWith("image/");
@@ -1140,7 +1054,7 @@ public class MainActivity extends Activity {
   @Override
   protected void onActivityResult(int req, int res, Intent data) {
     super.onActivityResult(req, res, data);
-    if (req == 2 && res == RESULT_OK && data != null && data.getData() != null) {
+    if (req == PICK_MUSIC && res == RESULT_OK && data != null && data.getData() != null) {
       musicUri = data.getData();
       musicName = displayName(musicUri);
       refreshTimeline();
@@ -1149,6 +1063,8 @@ public class MainActivity extends Activity {
     }
     if (req == PICK && res == RESULT_OK && data != null && data.getData() != null) {
       videoUri = data.getData();
+      selectedClip = -1;
+      refreshTimeline();
       startMs = 0;
       endMs = 0;
       if (isImageUri(videoUri)) {
@@ -1159,8 +1075,8 @@ public class MainActivity extends Activity {
         status.setText("Trim if you want, then tap Add clip. Clips in project: " + clips.size());
       }
     }
-                        }
-  
+  }
+
   private void showImage(Uri uri) {
     if (player != null) player.pause();
     previewIsImage = true;
@@ -1196,6 +1112,9 @@ public class MainActivity extends Activity {
 
   // Tapping a block in the timeline shows that clip in the preview
   private void showClip(Clip c) {
+    speedSpinner.setSelection(indexOf(SPEED_VALUES, c.speed));
+    volumeSpinner.setSelection(indexOf(VOLUME_VALUES, c.volume));
+    pitchSpinner.setSelection(!c.isImage && c.speed != 1f && c.pitch == c.speed ? 1 : 0);
     videoUri = c.uri;
     if (c.isImage) {
       showImage(c.uri);
@@ -1371,7 +1290,8 @@ public class MainActivity extends Activity {
       }
       items.add(eb.build());
     }
-        EditedMediaItemSequence videoSequence = new EditedMediaItemSequence(items);
+
+    EditedMediaItemSequence videoSequence = new EditedMediaItemSequence(items);
     Composition composition;
     if (musicUri != null) {
       long totalMs = 0;
@@ -1397,7 +1317,7 @@ public class MainActivity extends Activity {
       composition = new Composition.Builder(videoSequence, musicSequence).build();
     } else {
       composition = new Composition.Builder(videoSequence).build();
-        }
+    }
 
     DefaultEncoderFactory.Builder ef = new DefaultEncoderFactory.Builder(this)
         .setEnableFallback(fallback);
@@ -1409,6 +1329,7 @@ public class MainActivity extends Activity {
 
     transformer = new Transformer.Builder(this)
         .setEncoderFactory(ef.build())
+        .setMaxDelayBetweenMuxerSamplesMs(60000)
         .addListener(new Transformer.Listener() {
           @Override
           public void onCompleted(Composition c, ExportResult result) {
@@ -1479,6 +1400,8 @@ public class MainActivity extends Activity {
           + " even after trying safer settings. Try a lower quality.";
     } else if (code.contains("DECOD")) {
       msg = "Your phone can't read one of these files (format not supported).";
+    } else if (code.contains("MUXING_TIMEOUT")) {
+      msg = "The export got stuck for too long. Try a lower quality or fewer clips.";
     } else {
       msg = "Something went wrong during export.";
     }
@@ -1492,6 +1415,7 @@ public class MainActivity extends Activity {
         ContentResolver cr = getContentResolver();
         ContentValues cv = new ContentValues();
         cv.put(MediaStore.Video.Media.DISPLAY_NAME, "EasyFlow_" + System.currentTimeMillis() + ".mp4");
+        cv.put(MediaStore.Video.Media.MIME_TYPE, "video/mp4");
         cv.put(MediaStore.Video.Media.RELATIVE_PATH, "Movies/EasyFlow");
         Uri dest = cr.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, cv);
         try (InputStream in = new FileInputStream(file);
@@ -1525,4 +1449,4 @@ public class MainActivity extends Activity {
     if (transformer != null) transformer.cancel();
     if (player != null) player.release();
   }
-               }
+                      }
