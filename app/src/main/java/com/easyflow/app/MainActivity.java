@@ -1138,14 +1138,14 @@ public class MainActivity extends Activity {
   @Override
   protected void onActivityResult(int req, int res, Intent data) {
     super.onActivityResult(req, res, data);
-        if (req == 2 && res == RESULT_OK && data != null && data.getData() != null) {
+    if (req == 2 && res == RESULT_OK && data != null && data.getData() != null) {
       musicUri = data.getData();
       musicName = displayName(musicUri);
       refreshTimeline();
       status.setText("Music added: " + musicName + ". It plays under the whole video in the export.");
       return;
-      }
-    
+    }
+    if (req == PICK && res == RESULT_OK && data != null && data.getData() != null) {
       videoUri = data.getData();
       startMs = 0;
       endMs = 0;
@@ -1157,8 +1157,8 @@ public class MainActivity extends Activity {
         status.setText("Trim if you want, then tap Add clip. Clips in project: " + clips.size());
       }
     }
-  }
-
+                        }
+  
   private void showImage(Uri uri) {
     if (player != null) player.pause();
     previewIsImage = true;
