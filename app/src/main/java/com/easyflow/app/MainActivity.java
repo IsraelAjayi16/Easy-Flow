@@ -525,6 +525,63 @@ public class MainActivity extends Activity {
     }
     }
 
+    // ---------- Music lane under the timeline ----------
+  static class MusicLaneView extends View {
+    private final Paint barPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint textPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final RectF bar = new RectF();
+    private final float d;
+    private final List<Clip> data = new ArrayList<>();
+    private String name = "";
+
+    MusicLaneView(Context c) {
+      super(c);
+      d = c.getResources().getDisplayMetrics().density;
+      setBackgroundColor(Color.parseColor("#141230"));
+      barPaint.setColor(Color.parseColor("#5E548E"));
+      textPaint.setColor(Color.WHITE);
+      textPaint.setTextSize(9f * d);
+      textPaint.setTypeface(Typeface.DEFAULT_BOLD);
+    }
+
+    void setData(List<Clip> clips, String musicName) {
+      data.clear();
+      data.addAll(clips);
+      name = musicName == null ? "" : musicName;
+      requestLayout();
+      invalidate();
+    }
+
+    private float clipsWidth() {
+      float total = 0;
+      for (Clip c : data) {
+        float sec = (c.durationMs() / c.speed) / 1000f;
+        total += Math.max(56f * d, sec * 40f * d) + 3f * d;
+      }
+      return total;
+    }
+
+    @Override
+    protected void onMeasure(int w, int h) {
+      float total = 24f * d + clipsWidth();
+      int minW = getResources().getDisplayMetrics().widthPixels;
+      int height = name.isEmpty() ? 0 : (int) (26f * d);
+      setMeasuredDimension((int) Math.max(total, minW), height);
+    }
+
+    @Override
+    protected void onDraw(Canvas canvas) {
+      if (name.isEmpty()) return;
+      float right = data.isEmpty() ? 8f * d + 140f * d : 8f * d + clipsWidth() - 3f * d;
+      bar.set(8f * d, 3f * d, right, getHeight() - 3f * d);
+      canvas.drawRoundRect(bar, 5f * d, 5f * d, barPaint);
+      canvas.save();
+      canvas.clipRect(bar);
+      canvas.drawText("Music: " + name, bar.left + 6f * d, bar.centerY() + 3.5f * d, textPaint);
+      canvas.restore();
+    }
+              }
+                            
   // ---------- Options ----------
   private static final int PICK = 1;
   private static final long IMAGE_MS = 3000;
@@ -572,7 +629,11 @@ public class MainActivity extends Activity {
   private FilmstripView timeline;
   private TextView timelineInfo;
   private int selectedClip = -1;
-
+  private Uri musicUri;
+  private String musicName = "";
+  private Spinner musicVolSpinner;
+  private MusicLaneView musicLane;
+  
   private Transformer transformer;
   private File currentOut;
   private boolean exporting = false;
@@ -718,7 +779,12 @@ public class MainActivity extends Activity {
     });
     android.widget.HorizontalScrollView tlScroll = new android.widget.HorizontalScrollView(this);
     tlScroll.setHorizontalScrollBarEnabled(false);
-    tlScroll.addView(timeline);
+        LinearLayout tlColumn = new LinearLayout(this);
+    tlColumn.setOrientation(LinearLayout.VERTICAL);
+    tlColumn.addView(timeline);
+    musicLane = new MusicLaneView(this);
+    tlColumn.addView(musicLane);
+    tlScroll.addView(tlColumn);
     root.addView(tlScroll, wrap());
 
     LinearLayout tlRow = new LinearLayout(this);
@@ -776,7 +842,30 @@ public class MainActivity extends Activity {
     row2.addView(clear, half());
     root.addView(row2, wrap());
 
-    LinearLayout row3 = new LinearLayout(this);
+    Button addMusic = new Button(this);
+    addMusic.setText("Add music");
+    Button removeMusic = new Button(this);
+    removeMusic.setText("Remove");
+    musicVolSpinner = makeSpinner(VOLUME_LABELS);
+    musicVolSpinner.setSelection(3);
+    LinearLayout rowM = new LinearLayout(this);
+    rowM.setOrientation(LinearLayout.HORIZONTAL);
+    rowM.addView(addMusic, half());
+    rowM.addView(removeMusic, half());
+    rowM.addView(musicVolSpinner, half());
+    root.addView(rowM, wrap());
+    addMusic.setOnClickListener(v -> {
+      Intent mi = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+      mi.addCategory(Intent.CATEGORY_OPENABLE);
+      mi.setType("audio/*");
+      startActivityForResult(mi, 2);
+    });
+    removeMusic.setOnClickListener(v -> {
+      musicUri = null;
+      musicName = "";
+      refreshTimeline();
+      status.setText("Music removed.");
+    });
     row3.setOrientation(LinearLayout.HORIZONTAL);
     quality = makeSpinner(QUALITY_LABELS);
     fpsSpinner = makeSpinner(FPS_LABELS);
