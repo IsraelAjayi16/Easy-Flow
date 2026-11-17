@@ -866,6 +866,8 @@ public class MainActivity extends Activity {
       refreshTimeline();
       status.setText("Music removed.");
     });
+
+    LinearLayout row3 = new LinearLayout(this);
     row3.setOrientation(LinearLayout.HORIZONTAL);
     quality = makeSpinner(QUALITY_LABELS);
     fpsSpinner = makeSpinner(FPS_LABELS);
