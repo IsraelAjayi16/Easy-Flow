@@ -291,6 +291,240 @@ public class MainActivity extends Activity {
     }
   }
 
+  // ---------- Timeline with video thumbnails ----------
+  static class FilmstripView extends View {
+    interface Listener {
+      void onSelect(int index);
+    }
+
+    private final Paint bg = new Paint();
+    private final Paint tick = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint basePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint tint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint shade = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint outline = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint label = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint bmpPaint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
+    private final RectF rect = new RectF();
+    private final RectF dstRect = new RectF();
+    private final android.graphics.Rect srcRect = new android.graphics.Rect();
+    private final Path shape = new Path();
+    private final float d;
+    private final List<Clip> data = new ArrayList<>();
+    private int selected = -1;
+    private Listener listener;
+
+    private final LruCache<String, Bitmap> cache = new LruCache<>(120);
+    private final Set<String> pending = new HashSet<>();
+    private final ExecutorService worker = Executors.newSingleThreadExecutor();
+    private MediaMetadataRetriever retriever;
+    private Uri retrieverUri;
+
+    FilmstripView(Context c) {
+      super(c);
+      d = c.getResources().getDisplayMetrics().density;
+      bg.setColor(Color.parseColor("#141230"));
+      tick.setColor(Color.parseColor("#9E9E9E"));
+      tick.setStrokeWidth(1f * d);
+      basePaint.setColor(Color.parseColor("#673AB7"));
+      tint.setColor(Color.argb(80, 103, 58, 183));
+      shade.setColor(Color.argb(120, 0, 0, 0));
+      outline.setStyle(Paint.Style.STROKE);
+      outline.setStrokeWidth(2f * d);
+      outline.setColor(Color.WHITE);
+      label.setColor(Color.WHITE);
+      label.setTextSize(9f * d);
+      label.setTypeface(Typeface.DEFAULT_BOLD);
+    }
+
+    void setListener(Listener l) {
+      listener = l;
+    }
+
+    void setData(List<Clip> clips, int sel) {
+      data.clear();
+      data.addAll(clips);
+      selected = sel;
+      requestLayout();
+      invalidate();
+    }
+
+    private float widthOf(Clip c) {
+      float sec = (c.durationMs() / c.speed) / 1000f;
+      return Math.max(56f * d, sec * 40f * d);
+    }
+
+    @Override
+    protected void onMeasure(int w, int h) {
+      float total = 24f * d;
+      for (Clip c : data) total += widthOf(c) + 3f * d;
+      int minW = getResources().getDisplayMetrics().widthPixels;
+      setMeasuredDimension((int) Math.max(total, minW), (int) (60f * d));
+    }
+
+    private String num(float v) {
+      return v == (int) v ? String.valueOf((int) v) : String.valueOf(v);
+    }
+
+    @Override
+    protected void onDraw(Canvas canvas) {
+      canvas.drawRect(0, 0, getWidth(), getHeight(), bg);
+      for (float tx = 8f * d; tx < getWidth(); tx += 40f * d) {
+        canvas.drawLine(tx, 0, tx, 6f * d, tick);
+      }
+      float left = 8f * d;
+      for (int i = 0; i < data.size(); i++) {
+        Clip c = data.get(i);
+        float w = widthOf(c);
+        rect.set(left, 10f * d, left + w, getHeight() - 4f * d);
+
+        shape.reset();
+        shape.addRoundRect(rect, 5f * d, 5f * d, Path.Direction.CW);
+        canvas.save();
+        canvas.clipPath(shape);
+        canvas.drawRect(rect, basePaint);
+        drawThumbs(canvas, c, rect);
+        canvas.drawRect(rect, tint);
+        canvas.drawRect(rect.left, rect.top, rect.right, rect.top + 14f * d, shade);
+        String text = (i + 1) + "  "
+            + String.format(java.util.Locale.US, "%.1fs", (c.durationMs() / c.speed) / 1000f);
+        if (!c.isImage) text += "  " + num(c.speed) + "x  " + Math.round(c.volume * 100) + "%";
+        canvas.drawText(text, rect.left + 5f * d, rect.top + 11f * d, label);
+        canvas.restore();
+
+        if (i == selected) canvas.drawRoundRect(rect, 5f * d, 5f * d, outline);
+        left += w + 3f * d;
+      }
+    }
+
+    private void drawThumbs(Canvas canvas, Clip c, RectF r) {
+      float tileW = r.height() * 16f / 9f;
+      int count = Math.max(1, (int) Math.ceil(r.width() / tileW));
+      float step = r.width() / count;
+      for (int k = 0; k < count; k++) {
+        long t = 0;
+        if (!c.isImage) {
+          t = c.srcStart + (long) ((k + 0.5f) / count * c.durationMs());
+          t = (t / 500) * 500;
+        }
+        String key = c.uri + "|" + t;
+        Bitmap bmp = cache.get(key);
+        if (bmp == null) {
+          request(c, t, key);
+          continue;
+        }
+        dstRect.set(r.left + k * step, r.top, r.left + (k + 1) * step, r.bottom);
+        float tileAspect = dstRect.width() / dstRect.height();
+        float bmpAspect = (float) bmp.getWidth() / bmp.getHeight();
+        int sw;
+        int sh;
+        if (bmpAspect > tileAspect) {
+          sh = bmp.getHeight();
+          sw = (int) (sh * tileAspect);
+        } else {
+          sw = bmp.getWidth();
+          sh = (int) (sw / tileAspect);
+        }
+        int sx = (bmp.getWidth() - sw) / 2;
+        int sy = (bmp.getHeight() - sh) / 2;
+        srcRect.set(sx, sy, sx + sw, sy + sh);
+        canvas.drawBitmap(bmp, srcRect, dstRect, bmpPaint);
+      }
+    }
+
+    private void request(final Clip c, final long timeMs, final String key) {
+      synchronized (pending) {
+        if (!pending.add(key)) return;
+      }
+      worker.execute(() -> {
+        Bitmap bmp = null;
+        try {
+          bmp = c.isImage ? loadImage(c.uri) : loadFrame(c.uri, timeMs);
+        } catch (Exception e) {
+          bmp = null;
+        }
+        if (bmp != null) {
+          cache.put(key, bmp);
+          synchronized (pending) {
+            pending.remove(key);
+          }
+          postInvalidate();
+        }
+      });
+    }
+
+    private Bitmap loadFrame(Uri uri, long timeMs) throws Exception {
+      if (retriever == null || !uri.equals(retrieverUri)) {
+        if (retriever != null) {
+          try {
+            retriever.release();
+          } catch (Exception e) {
+            // ignore
+          }
+          retriever = null;
+        }
+        MediaMetadataRetriever r = new MediaMetadataRetriever();
+        try {
+          r.setDataSource(getContext(), uri);
+        } catch (Exception e) {
+          r.release();
+          throw e;
+        }
+        retriever = r;
+        retrieverUri = uri;
+      }
+      String ws = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH);
+      String hs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT);
+      String rot = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION);
+      int w = ws != null ? Integer.parseInt(ws) : 160;
+      int h = hs != null ? Integer.parseInt(hs) : 90;
+      if ("90".equals(rot) || "270".equals(rot)) {
+        int tmp = w;
+        w = h;
+        h = tmp;
+      }
+      float scale = 160f / Math.max(w, h);
+      int dw = Math.max(2, (int) (w * scale));
+      int dh = Math.max(2, (int) (h * scale));
+      return retriever.getScaledFrameAtTime(
+          timeMs * 1000L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, dw, dh);
+    }
+
+    private Bitmap loadImage(Uri uri) throws Exception {
+      BitmapFactory.Options o = new BitmapFactory.Options();
+      o.inJustDecodeBounds = true;
+      try (InputStream in = getContext().getContentResolver().openInputStream(uri)) {
+        BitmapFactory.decodeStream(in, null, o);
+      }
+      int s = 1;
+      while (Math.max(o.outWidth, o.outHeight) / s > 320) s *= 2;
+      o.inJustDecodeBounds = false;
+      o.inSampleSize = s;
+      try (InputStream in2 = getContext().getContentResolver().openInputStream(uri)) {
+        return BitmapFactory.decodeStream(in2, null, o);
+      }
+    }
+
+    @Override
+    public boolean onTouchEvent(android.view.MotionEvent e) {
+      if (e.getAction() == android.view.MotionEvent.ACTION_DOWN) return true;
+      if (e.getAction() == android.view.MotionEvent.ACTION_UP) {
+        float left = 8f * d;
+        for (int i = 0; i < data.size(); i++) {
+          float w = widthOf(data.get(i));
+          if (e.getX() >= left && e.getX() <= left + w) {
+            if (listener != null) listener.onSelect(i);
+            return true;
+          }
+          left += w + 3f * d;
+        }
+        if (listener != null) listener.onSelect(-1);
+        return true;
+      }
+      return super.onTouchEvent(e);
+    }
+    }
+
   // ---------- Options ----------
   private static final int PICK = 1;
   private static final long IMAGE_MS = 3000;
@@ -335,7 +569,7 @@ public class MainActivity extends Activity {
   private String limitsText = "";
   private String adjustNote = "";
 
-  private TimelineView timeline;
+  private FilmstripView timeline;
   private TextView timelineInfo;
   private int selectedClip = -1;
 
@@ -476,7 +710,7 @@ public class MainActivity extends Activity {
     timelineInfo.setPadding(24, 0, 24, 4);
     root.addView(timelineInfo, wrap());
 
-    timeline = new TimelineView(this);
+    timeline = new FilmstripView(this);
     timeline.setListener(index -> {
       selectedClip = index;
       refreshTimeline();
